@@ -5,13 +5,18 @@ Edit these values to match your OpenSearch cluster setup.
 """
 
 from rich.console import Console
+import os
+
+from dotenv import load_dotenv
+
+load_dotenv()
 
 # ─────────────────────────── CONFIG ────────────────────────────
-OPENSEARCH_HOST = "localhost"
-OPENSEARCH_PORT = 9200
-OPENSEARCH_USER = "admin"
-OPENSEARCH_PASS = "8905"
-OPENSEARCH_SSL = True
+OPENSEARCH_HOST = os.getenv("OPENSEARCH_HOST")
+OPENSEARCH_PORT = os.getenv("OPENSEARCH_PORT")
+OPENSEARCH_USER = os.getenv("OPENSEARCH_USER")
+OPENSEARCH_PASS = os.getenv("OPENSEARCH_PASS")
+OPENSEARCH_SSL = os.getenv("OPENSEARCH_SSL")
 # ───────────────────────────────────────────────────────────────
 
 # ─────────────────────── THRESHOLDS ────────────────────────────
