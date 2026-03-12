@@ -42,8 +42,8 @@ from monitor.utils import press_enter_to_return
 @click.option(
     "--service",
     type=click.Choice(["opensearch", "kafka", "logstash"], case_sensitive=False),
-    default="opensearch",
-    help="Service to monitor (kafka and logstash coming soon).",
+    default=None,
+    help="Service to monitor. Omit to see the service selector menu.",
 )
 def cli(timeframe, watch, summary, service):
     """OpenSearch Cluster Monitor — a terminal-based health checker."""
@@ -95,8 +95,13 @@ def cli(timeframe, watch, summary, service):
         _watch_loop(view_fn, watch)
         return
 
-    # Default: interactive menu navigation
-    main_service_menu(timeframe=timeframe)
+    # Default routing:
+    #   --service opensearch   → go directly to the OpenSearch menu
+    #   no --service flag      → show the top-level service selector
+    if service == "opensearch":
+        opensearch_menu(timeframe=timeframe)
+    else:
+        main_service_menu(timeframe=timeframe)
 
 
 def _watch_loop(view_fn, interval: int):

@@ -44,11 +44,21 @@ def fetch_cluster_health() -> dict:
         return {}
 
 
-def fetch_node_stats() -> dict:
-    """GET /_nodes/stats/os → per-node CPU and memory stats."""
+def fetch_cluster_stats() -> dict:
+    """GET /_cluster/stats → cluster-wide aggregated CPU, JVM, OS memory, disk, and index stats."""
     try:
         client = get_os_client()
-        return client.nodes.stats(metric="os, jvm")
+        return client.cluster.stats()
+    except Exception as e:
+        console.print(f"[red]Error fetching cluster stats:[/red] {e}")
+        return {}
+
+
+def fetch_node_stats() -> dict:
+    """GET /_nodes/stats/os,jvm,fs → per-node CPU, memory, JVM heap, and disk stats."""
+    try:
+        client = get_os_client()
+        return client.nodes.stats(metric="os,jvm,fs")
     except Exception as e:
         console.print(f"[red]Error fetching node stats:[/red] {e}")
         return {}

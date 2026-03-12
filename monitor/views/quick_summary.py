@@ -13,7 +13,14 @@ from rich.table import Table
 from rich import box
 
 from monitor.config import console, CPU_WARN, CPU_CRIT, HEAP_WARN, HEAP_CRIT, DISK_WARN, DISK_CRIT
-from monitor.client import fetch_cluster_health, fetch_node_stats, fetch_disk_allocation, fetch_indices, fetch_shards
+from monitor.client import (
+    fetch_cluster_health,
+    fetch_cluster_stats,
+    fetch_node_stats,
+    fetch_disk_allocation,
+    fetch_indices,
+    fetch_shards,
+)
 from monitor.utils import format_bytes, parse_size_string, status_symbol, cluster_status_symbol, cluster_status_styled
 
 
@@ -27,7 +34,7 @@ def display_quick_summary():
 
     warnings = []
 
-    # ── Cluster Health ────────────────────────────────────────
+    # ── Cluster Health ────────────────────────────────────────────────
     health = fetch_cluster_health()
     if health:
         status = health.get("status", "unknown")
@@ -50,92 +57,89 @@ def display_quick_summary():
     else:
         console.print("[red]Could not retrieve cluster health.[/red]")
 
-    # ── Resources (avg across nodes) ──────────────────────────
+    # ── Resources (via /_cluster/stats — pre-aggregated by OpenSearch) ──────────
+    # One API call gives us cluster-wide CPU, JVM heap, OS RAM, and disk totals.
+    # node_stats is fetched separately only to generate per-node targeted warnings.
+    cluster_stats = fetch_cluster_stats()
     node_stats = fetch_node_stats()
     disk_alloc = fetch_disk_allocation()
 
-    cpu_values = []
-    mem_used_total = 0
-    mem_total_total = 0
-    heap_used_total = 0
-    heap_max_total = 0
+    # Cluster-wide totals — OpenSearch pre-aggregates these across all nodes
+    avg_cpu = 0
+    heap_used_total = heap_max_total = 0
+    mem_used_total = mem_total_total = 0
+    disk_used_total = disk_total_total = 0
+
+    if cluster_stats:
+        cs_nodes = cluster_stats.get("nodes", {})
+
+        avg_cpu = cs_nodes.get("os", {}).get("cpu", {}).get("percent", 0)
+
+        os_mem = cs_nodes.get("os", {}).get("mem", {})
+        mem_used_total = os_mem.get("used_in_bytes", 0)
+        mem_total_total = os_mem.get("total_in_bytes", 0)
+
+        jvm_mem = cs_nodes.get("jvm", {}).get("mem", {})
+        heap_used_total = jvm_mem.get("heap_used_in_bytes", 0)
+        heap_max_total = jvm_mem.get("heap_max_in_bytes", 0)
+
+        fs = cs_nodes.get("fs", {})
+        fs_total = fs.get("total_in_bytes", 0)
+        fs_available = fs.get("available_in_bytes", 0)
+        disk_used_total = fs_total - fs_available
+        disk_total_total = fs_total
+
+    # Per-node breakdowns — used only to generate targeted warnings below
     node_cpu_details = []
-    node_mem_details = []
     node_heap_details = []
 
     if node_stats and "nodes" in node_stats:
         for node_id, node in node_stats["nodes"].items():
-            os_info = node.get("os", {})
             node_name = node.get("name", node_id[:8])
 
-            # CPU
-            cpu_pct = os_info.get("cpu", {}).get("percent", 0)
-            cpu_values.append(cpu_pct)
+            cpu_pct = node.get("os", {}).get("cpu", {}).get("percent", 0)
             node_cpu_details.append((node_name, cpu_pct))
 
-            # System RAM
-            mem_info = os_info.get("mem", {})
-            mem_used = mem_info.get("used_in_bytes", 0)
-            mem_total = mem_info.get("total_in_bytes", 0)
-            mem_used_total += mem_used
-            mem_total_total += mem_total
-
-            if mem_total > 0:
-                mem_pct = (mem_used / mem_total) * 100
-                node_mem_details.append((node_name, mem_pct))
-
-            # JVM Heap
             jvm_info = node.get("jvm", {}).get("mem", {})
             heap_used = jvm_info.get("heap_used_in_bytes", 0)
             heap_max = jvm_info.get("heap_max_in_bytes", 0)
-            heap_used_total += heap_used
-            heap_max_total += heap_max
-
             if heap_max > 0:
-                heap_pct = (heap_used / heap_max) * 100
-                node_heap_details.append((node_name, heap_pct))
+                node_heap_details.append((node_name, (heap_used / heap_max) * 100))
 
-    disk_used_total = 0
-    disk_total_total = 0
     node_disk_details = []
-
     if disk_alloc:
         for entry in disk_alloc:
-            disk_used_str = entry.get("disk.used", "0")
-            disk_total_str = entry.get("disk.total", "0")
             node_name = entry.get("node", "unknown")
-
-            disk_used = parse_size_string(disk_used_str)
-            disk_total = parse_size_string(disk_total_str)
-            disk_used_total += disk_used
-            disk_total_total += disk_total
-
+            disk_used = parse_size_string(entry.get("disk.used", "0"))
+            disk_total = parse_size_string(entry.get("disk.total", "0"))
             if disk_total > 0:
-                disk_pct = (disk_used / disk_total) * 100
-                node_disk_details.append((node_name, disk_pct))
+                node_disk_details.append((node_name, (disk_used / disk_total) * 100))
 
-    avg_cpu = sum(cpu_values) / len(cpu_values) if cpu_values else 0
     cpu_sym = status_symbol(avg_cpu, CPU_WARN, CPU_CRIT)
     heap_pct_total = (heap_used_total / heap_max_total * 100) if heap_max_total > 0 else 0
     heap_sym = status_symbol(heap_pct_total, HEAP_WARN, HEAP_CRIT)
-    disk_sym = status_symbol((disk_used_total / disk_total_total * 100) if disk_total_total > 0 else 0, DISK_WARN, DISK_CRIT)
+    disk_sym = status_symbol(
+        (disk_used_total / disk_total_total * 100) if disk_total_total > 0 else 0,
+        DISK_WARN, DISK_CRIT,
+    )
 
     resources_text = (
         f"  CPU        : {avg_cpu:.0f}%                       {cpu_sym}\n"
         f"  JVM Heap   : {format_bytes(heap_used_total)} / {format_bytes(heap_max_total)}   {heap_sym}\n"
-        f"  System RAM : {format_bytes(mem_used_total)} / {format_bytes(mem_total_total)}   [dim](normal — OpenSearch uses OS RAM as cache)[/dim]\n"
+        f"  System RAM : {format_bytes(mem_used_total)} / {format_bytes(mem_total_total)}"
+        f"   [dim](normal — OpenSearch uses OS RAM as cache)[/dim]\n"
         f"  Disk       : {format_bytes(disk_used_total)} / {format_bytes(disk_total_total)} {disk_sym}"
     )
 
     console.print(Panel(
         resources_text,
-        title="[bold]Resources (avg across nodes)[/bold]",
+        title="[bold]Resources (cluster-wide)[/bold]",
         title_align="left",
         border_style="cyan",
         expand=False,
     ))
 
-    # Generate resource warnings
+    # Generate per-node resource warnings
     for node_name, cpu_pct in node_cpu_details:
         if cpu_pct >= CPU_CRIT:
             warnings.append(f"[red]✗[/red]  CPU is at {cpu_pct}% on {node_name} — critically high, investigate immediately.")
@@ -154,19 +158,26 @@ def display_quick_summary():
         elif disk_pct >= DISK_WARN:
             warnings.append(f"[yellow]⚠[/yellow]  Disk is at {disk_pct:.0f}% on {node_name} — consider cleaning old indices soon.")
 
-    # ── Index Activity ────────────────────────────────────────
+    # ── Index Activity ────────────────────────────────────────────────
     indices = fetch_indices()
+
+    # Doc count and indexing ops re-use the already-fetched cluster_stats (no extra API call)
+    cs_indices = cluster_stats.get("indices", {}) if cluster_stats else {}
+    total_docs = cs_indices.get("docs", {}).get("count", 0)
+    index_ops_total = cs_indices.get("indexing", {}).get("index_total", 0)
+
     if indices:
         total_indices = len(indices)
         total_data = sum(parse_size_string(idx.get("store.size", "0")) for idx in indices)
 
-        # Find largest index
-        largest_name = indices[0].get("index", "—") if indices else "—"
-        largest_size = format_bytes(parse_size_string(indices[0].get("store.size", "0"))) if indices else "—"
+        largest_name = indices[0].get("index", "—")
+        largest_size = format_bytes(parse_size_string(indices[0].get("store.size", "0")))
 
         console.print(Panel(
             f"  Total indices  : {total_indices}\n"
+            f"  Total documents: {total_docs:,}\n"
             f"  Total data     : {format_bytes(total_data)}\n"
+            f"  Indexing ops   : {index_ops_total:,}  [dim](cumulative — 0 means idle / no active writes)[/dim]\n"
             f"  Largest index  : {largest_name} ({largest_size})",
             title="[bold]Index Activity[/bold]",
             title_align="left",
@@ -182,7 +193,7 @@ def display_quick_summary():
             expand=False,
         ))
 
-    # ── Shards ────────────────────────────────────────────────
+    # ── Shards ─────────────────────────────────────────────────────
     all_shards = fetch_shards()
     if all_shards:
         active_count = sum(1 for s in all_shards if s.get("state", "").upper() == "STARTED")
@@ -218,7 +229,7 @@ def display_quick_summary():
             expand=False,
         ))
 
-    # ── Warnings Footer ──────────────────────────────────────
+    # ── Warnings Footer ──────────────────────────────────────────────
     if warnings:
         console.print()
         console.rule("[bold yellow]Alerts[/bold yellow]")

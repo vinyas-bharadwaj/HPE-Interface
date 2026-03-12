@@ -30,9 +30,11 @@ MENU_HIGHLIGHT_STYLE = ("fg_cyan", "bold")
 
 SERVICE_OPTIONS = [
     "OpenSearch",
+    "---",
     "Kafka          (coming soon)",
     "Logstash       (coming soon)",
     "All Services   (coming soon)",
+    "---",
     "Exit",
 ]
 
@@ -57,12 +59,12 @@ def main_service_menu(timeframe: str = "1h"):
         )
         choice = menu.show()
 
-        if choice is None or choice == 4:  # Escape or Exit
+        if choice is None or choice == 6:  # Escape or Exit
             console.print("[bold green]Goodbye![/bold green]")
             sys.exit(0)
         elif choice == 0:
             opensearch_menu(timeframe=timeframe)
-        elif choice in (1, 2, 3):
+        elif choice in (2, 3, 4):
             console.print("\n[yellow]⚠  This service is coming soon.[/yellow]")
             press_enter_to_return()
 
@@ -77,7 +79,32 @@ OPENSEARCH_VIEWS = [
     ("Shard Overview", display_shard_overview),
 ]
 
-OPENSEARCH_OPTIONS = [label for label, _ in OPENSEARCH_VIEWS] + ["Back to Main Menu"]
+TIMEFRAME_OPTIONS = ["1h", "6h", "24h", "7d"]
+
+
+def _pick_timeframe(current: str) -> str:
+    """Show an inline timeframe picker and return the chosen value (or current on cancel)."""
+    console.clear()
+    console.print()
+    console.print(Panel.fit(
+        f"[bold cyan]Change Timeframe[/bold cyan]\n"
+        f"[dim]Current: {current}  —  Use arrow keys, Enter to confirm[/dim]",
+        border_style="cyan",
+    ))
+    console.print()
+
+    options = TIMEFRAME_OPTIONS + ["Cancel"]
+    menu = TerminalMenu(
+        options,
+        menu_cursor=MENU_CURSOR,
+        menu_cursor_style=MENU_CURSOR_STYLE,
+        menu_highlight_style=MENU_HIGHLIGHT_STYLE,
+    )
+    choice = menu.show()
+
+    if choice is None or choice == len(TIMEFRAME_OPTIONS):
+        return current
+    return TIMEFRAME_OPTIONS[choice]
 
 
 def opensearch_menu(timeframe: str = "1h"):
@@ -87,27 +114,47 @@ def opensearch_menu(timeframe: str = "1h"):
         console.print()
         console.print(Panel.fit(
             "[bold cyan]OpenSearch Monitor[/bold cyan]\n"
-            f"[dim]Timeframe: {timeframe}[/dim]",
+            f"[dim]Timeframe: {timeframe}  —  Use arrow keys, Enter to select[/dim]",
             border_style="cyan",
         ))
         console.print()
 
+        # Rebuild each loop so the timeframe label stays current
+        view_labels = [label for label, _ in OPENSEARCH_VIEWS]
+        menu_options = view_labels + [
+            "---",
+            f"Change Timeframe   (now: {timeframe})",
+            "---",
+            "Back to Main Menu",
+        ]
+
         menu = TerminalMenu(
-            OPENSEARCH_OPTIONS,
+            menu_options,
             menu_cursor=MENU_CURSOR,
             menu_cursor_style=MENU_CURSOR_STYLE,
             menu_highlight_style=MENU_HIGHLIGHT_STYLE,
         )
         choice = menu.show()
 
-        if choice is None or choice == len(OPENSEARCH_VIEWS):  # Escape or Back
+        # Escape or "Back to Main Menu" (last item)
+        if choice is None or choice == len(menu_options) - 1:
             return
 
-        _, view_fn = OPENSEARCH_VIEWS[choice]
-        console.clear()
-        try:
-            view_fn()
-        except Exception as e:
-            console.print(f"\n[red]Error:[/red] {e}")
+        # Separator — do nothing
+        if menu_options[choice] == "---":
+            continue
 
-        press_enter_to_return()
+        # Change Timeframe
+        if choice == len(view_labels) + 1:  # index after first "---"
+            timeframe = _pick_timeframe(timeframe)
+            continue
+
+        # View selection
+        if choice < len(OPENSEARCH_VIEWS):
+            _, view_fn = OPENSEARCH_VIEWS[choice]
+            console.clear()
+            try:
+                view_fn()
+            except Exception as e:
+                console.print(f"\n[red]Error:[/red] {e}")
+            press_enter_to_return()
