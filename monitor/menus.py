@@ -129,7 +129,12 @@ def opensearch_menu(timeframe: str = "1h", query: str = "*", level: str = None, 
             try:
                 # Pass extra context to specific views
                 if label == "Log Browser":
-                    view_fn(timeframe=timeframe, query_str=query, level=level)
+                    # Only pass query_str/level if they came from CLI flags (not default None)
+                    # For interactive menu, defaults are fine.
+                    kwargs = {"timeframe": timeframe}
+                    if query != "*": kwargs["query_str"] = query
+                    if level: kwargs["level"] = level
+                    view_fn(**kwargs)
                 elif label == "Root Cause Analysis":
                     view_fn(spike_ts=spike_ts)
                 else:

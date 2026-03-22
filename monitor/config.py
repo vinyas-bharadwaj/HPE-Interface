@@ -67,7 +67,7 @@ DISK_CRIT = 90
 # ───────────────────────────────────────────────────────────────
 
 # ──────────────── Log Configuration ────────────────────────────
-OPENSEARCH_INDEX = os.getenv("OPENSEARCH_INDEX", "system-logs-*")
+OPENSEARCH_INDEX = os.getenv("OPENSEARCH_INDEX", "hpc-telemetry-*")
 
 # Log colors for UI consistency
 LOG_COLORS = {

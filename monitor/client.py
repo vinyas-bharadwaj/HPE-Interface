@@ -155,7 +155,9 @@ def search_logs(query_str: str = "*", minutes: int = 30, size: int = 20, level: 
         "timeout": "20s",
         "sort": [{"@timestamp": {"order": "desc"}}],
         "query": {"bool": {"must": must}},
-        "_source": ["@timestamp", "message", "log.level", "hostname", "instance", "program"]
+        # Fetch all fields if source filtering is causing issues with custom schemas
+        # Or broaden to include common fields like node_id, event, etc.
+        "_source": ["@timestamp", "message", "log.level", "hostname", "instance", "program", "node_id", "event.original", "status", "cpu_util_percent", "mem_util_percent"]
     }
     try:
         client = get_os_client()
@@ -231,7 +233,8 @@ def fetch_logs_for_spike(start: str, end: str, size: int = 100) -> list:
         "timeout": "20s",
         "sort": [{"@timestamp": {"order": "asc"}}],
         "query": {"range": {"@timestamp": {"gte": start, "lte": end}}},
-        "_source": ["@timestamp", "message", "log.level", "hostname", "program"]
+        # Include fields needed for modern telemetry parsing
+        "_source": ["@timestamp", "message", "log.level", "hostname", "program", "node_id", "event.original", "cpu_util_percent", "mem_util_percent", "status"]
     }
     try:
         client = get_os_client()

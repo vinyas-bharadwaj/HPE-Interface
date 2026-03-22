@@ -57,19 +57,54 @@ def display_root_cause_analysis(spike_ts: str = None, window_min: int = 5):
     seen = set()
     for h in hits:
         src = h["_source"]
-        msg = src.get("message", "")
+        
+        # Determine Message (message -> event.original -> fallback)
+        msg = src.get("message")
+        if not msg:
+            if "event" in src and "original" in src["event"]:
+                 # Extract standard JSON string if available
+                 msg = src["event"]["original"]
+            
+            # Fallback failed? Try explicit metric fields construction
+            # This handles cases where event.original might be missing or non-string
+            if not msg:
+                 parts = []
+                 if "cpu_util_percent" in src: parts.append(f"CPU: {src['cpu_util_percent']}%")
+                 if "mem_util_percent" in src: parts.append(f"Mem: {src['mem_util_percent']}%")
+                 msg = ", ".join(parts) if parts else ""
+            
+            # Final fallback to empty string to prevent NoneType errors
+            if not msg:
+                msg = ""
+
+        # Ensure msg is a string before hashing/slicing
+        msg = str(msg)
+
         if msg[:120] in seen:
             continue
         seen.add(msg[:120])
         
+        # Run pattern matching against constructed message
         reason = next(
             (label for kw, label in ROOT_CAUSE_PATTERNS if kw.lower() in msg.lower()),
             None
         )
+
+        # Determine Host and Level
+        host = src.get("hostname") or src.get("node_id", "—")
+        
+        raw_lvl = src.get("log", {}).get("level")
+        if not raw_lvl:
+            status = src.get("status")
+            if status == "active": raw_lvl = "info"
+            elif status == "failed": raw_lvl = "error"
+            else: raw_lvl = "info"
+        level = raw_lvl.lower()
+
         annotated.append({
             "ts": src.get("@timestamp", "")[:19].replace("T", " "),
-            "host": src.get("hostname", "—"),
-            "level": src.get("log", {}).get("level", "info").lower(),
+            "host": host,
+            "level": level,
             "msg": msg[:220],
             "reason": reason
         })
@@ -84,7 +119,11 @@ def display_root_cause_analysis(spike_ts: str = None, window_min: int = 5):
 
     for a in annotated:
         col = LOG_COLORS.get(a["level"], "white")
-        msg_display = f"{a['reason']}\n[dim]{a['msg']}[/dim]" if a["reason"] else a["msg"]
+        
+        # Ensure message is a string
+        safe_msg = str(a["msg"])
+        
+        msg_display = f"{a['reason']}\n[dim]{safe_msg}[/dim]" if a["reason"] else safe_msg
         
         table.add_row(
             a["ts"],

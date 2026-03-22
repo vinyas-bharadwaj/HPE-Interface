@@ -44,18 +44,41 @@ def display_log_browser(timeframe: str = "1h", query_str: str = "*", level: str 
 
     for h in hits:
         src = h["_source"]
-        lvl = src.get("log", {}).get("level", "info").lower()
+        
+        # Determine Level (log.level -> status -> info default)
+        raw_lvl = src.get("log", {}).get("level")
+        if not raw_lvl:
+            # Fallback for metrics/telemetry data which might use 'status'
+            status = src.get("status")
+            if status == "active": raw_lvl = "info"
+            elif status == "failed": raw_lvl = "error"
+            else: raw_lvl = "info"
+        lvl = raw_lvl.lower()
         col = LOG_COLORS.get(lvl, "white")
         
         ts = src.get("@timestamp", "")[:19].replace("T", " ")
-        host = src.get("hostname", "—")
-        msg = src.get("message", "")[:200]
         
+        # Determine Host (hostname -> node_id -> —)
+        host = src.get("hostname") or src.get("node_id", "—")
+        
+        # Determine Message (message -> event.original -> constructed string)
+        msg = src.get("message")
+        if not msg:
+            if "event" in src and "original" in src["event"]:
+                 # Some beats put the raw JSON in event.original
+                 msg = src["event"]["original"]
+            else:
+                 # Construct message from known metrics if available
+                 parts = []
+                 if "cpu_util_percent" in src: parts.append(f"CPU: {src['cpu_util_percent']}%")
+                 if "mem_util_percent" in src: parts.append(f"Mem: {src['mem_util_percent']}%")
+                 msg = ", ".join(parts) if parts else ""
+
         table.add_row(
             ts,
             f"[{col}]{lvl.upper()}[/{col}]",
             host,
-            msg
+            msg[:200]
         )
 
     console.print(table)
